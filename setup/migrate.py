@@ -101,6 +101,98 @@ def migration_8(env):
 	# a new key, which will be 2048 bits.
 	os.unlink(os.path.join(env['STORAGE_ROOT'], 'mail/dkim/mail.private'))
 
+def migration_9(env):
+	# Add a column to the aliases table to store permitted_senders,
+	# which is a list of user account email addresses that are
+	# permitted to send mail using this alias instead of their own
+	# address. This was motivated by the addition of #427 ("Reject
+	# outgoing mail if FROM does not match Login") - which introduced
+	# the notion of outbound permitted-senders.
+	db = os.path.join(env["STORAGE_ROOT"], 'mail/users.sqlite')
+	shell("check_call", ["sqlite3", db, "ALTER TABLE aliases ADD permitted_senders TEXT"])
+
+def migration_10(env):
+	# Clean up the SSL certificates directory.
+
+	# Move the primary certificate to a new name and then
+	# symlink it to the system certificate path.
+	import datetime
+	system_certificate = os.path.join(env["STORAGE_ROOT"], 'ssl/ssl_certificate.pem')
+	if not os.path.islink(system_certificate): # not already a symlink
+		new_path = os.path.join(env["STORAGE_ROOT"], 'ssl', env['PRIMARY_HOSTNAME'] + "-" + datetime.datetime.now().date().isoformat().replace("-", "") + ".pem")
+		print("Renamed", system_certificate, "to", new_path, "and created a symlink for the original location.")
+		shutil.move(system_certificate, new_path)
+		os.symlink(new_path, system_certificate)
+
+	# Flatten the directory structure. For any directory
+	# that contains a single file named ssl_certificate.pem,
+	# move the file out and name it the same as the directory,
+	# and remove the directory.
+	for sslcert in glob.glob(os.path.join( env["STORAGE_ROOT"], 'ssl/*/ssl_certificate.pem' )):
+		d = os.path.dirname(sslcert)
+		if len(os.listdir(d)) == 1:
+			# This certificate is the only file in that directory.
+			newname = os.path.join(env["STORAGE_ROOT"], 'ssl', os.path.basename(d) + '.pem')
+			if not os.path.exists(newname):
+				shutil.move(sslcert, newname)
+				os.rmdir(d)
+
+def migration_11(env):
+	# Archive the old Let's Encrypt account directory managed by free_tls_certificates
+	# because we'll use that path now for the directory managed by certbot.
+	try:
+		old_path = os.path.join(env["STORAGE_ROOT"], 'ssl', 'lets_encrypt')
+		new_path = os.path.join(env["STORAGE_ROOT"], 'ssl', 'lets_encrypt-old')
+		shutil.move(old_path, new_path)
+	except:
+		# meh
+		pass
+
+def migration_12(env):
+	# Upgrading to Carddav Roundcube plugin to version 3+, it requires the carddav_*
+        # tables to be dropped.
+        # Checking that the roundcube database already exists.
+        if os.path.exists(os.path.join(env["STORAGE_ROOT"], "mail/roundcube/roundcube.sqlite")):
+            import sqlite3
+            conn = sqlite3.connect(os.path.join(env["STORAGE_ROOT"], "mail/roundcube/roundcube.sqlite"))
+            c = conn.cursor()
+            # Get a list of all the tables that begin with 'carddav_'
+            c.execute("SELECT name FROM sqlite_master WHERE type = ? AND name LIKE ?", ('table', 'carddav_%'))
+            carddav_tables = c.fetchall()
+            # If there were tables that begin with 'carddav_', drop them
+            if carddav_tables:
+                for table in carddav_tables:
+                    try:
+                        table = table[0]
+                        c = conn.cursor()
+                        dropcmd = "DROP TABLE %s" % table
+                        c.execute(dropcmd)
+                    except:
+                        print("Failed to drop table", table, e)
+            # Save.
+            conn.commit()
+            conn.close()
+
+            # Delete all sessions, requring users to login again to recreate carddav_*
+            # databases
+            conn = sqlite3.connect(os.path.join(env["STORAGE_ROOT"], "mail/roundcube/roundcube.sqlite"))
+            c = conn.cursor()
+            c.execute("delete from session;")
+            conn.commit()
+            conn.close()
+
+def migration_13(env):
+	# Add the "mfa" table for configuring MFA for login to the control panel.
+	db = os.path.join(env["STORAGE_ROOT"], 'mail/users.sqlite')
+	shell("check_call", ["sqlite3", db, "CREATE TABLE mfa (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, type TEXT NOT NULL, secret TEXT NOT NULL, mru_token TEXT, label TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);"])
+
+def migration_14(env):
+	# Add the "auto_aliases" table.
+	db = os.path.join(env["STORAGE_ROOT"], 'mail/users.sqlite')
+	shell("check_call", ["sqlite3", db, "CREATE TABLE auto_aliases (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL UNIQUE, destination TEXT NOT NULL, permitted_senders TEXT);"])
+
+###########################################################
+
 def get_current_migration():
 	ver = 0
 	while True:

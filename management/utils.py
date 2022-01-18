@@ -1,6 +1,10 @@
 import os.path
 
-CONF_DIR = os.path.join(os.path.dirname(__file__), "../conf")
+# DO NOT import non-standard modules. This module is imported by
+# migrate.py which runs on fresh machines before anything is installed
+# besides Python.
+
+# THE ENVIRONMENT FILE AT /etc/mailinabox.conf
 
 def load_environment():
     # Load settings from /etc/mailinabox.conf.
@@ -18,38 +22,78 @@ def save_environment(env):
         for k, v in env.items():
             f.write("%s=%s\n" % (k, v))
 
+# THE SETTINGS FILE AT STORAGE_ROOT/settings.yaml.
+
+def write_settings(config, env):
+    import rtyaml
+    fn = os.path.join(env['STORAGE_ROOT'], 'settings.yaml')
+    with open(fn, "w") as f:
+        f.write(rtyaml.dump(config))
+
+def load_settings(env):
+    import rtyaml
+    fn = os.path.join(env['STORAGE_ROOT'], 'settings.yaml')
+    try:
+        config = rtyaml.load(open(fn, "r"))
+        if not isinstance(config, dict): raise ValueError() # caught below
+        return config
+    except:
+        return { }
+
+# UTILITIES
+
 def safe_domain_name(name):
     # Sanitize a domain name so it is safe to use as a file name on disk.
     import urllib.parse
     return urllib.parse.quote(name, safe='')
 
 def sort_domains(domain_names, env):
-    # Put domain names in a nice sorted order. For web_update, PRIMARY_HOSTNAME
-    # must appear first so it becomes the nginx default server.
-    
-    # First group PRIMARY_HOSTNAME and its subdomains, then parent domains of PRIMARY_HOSTNAME, then other domains.
-    groups = ( [], [], [] )
-    for d in domain_names:
-        if d == env['PRIMARY_HOSTNAME'] or d.endswith("." + env['PRIMARY_HOSTNAME']):
-            groups[0].append(d)
-        elif env['PRIMARY_HOSTNAME'].endswith("." + d):
-            groups[1].append(d)
+    # Put domain names in a nice sorted order.
+
+    # The nice order will group domain names by DNS zone, i.e. the top-most
+    # domain name that we serve that ecompasses a set of subdomains. Map
+    # each of the domain names to the zone that contains them. Walk the domains
+    # from shortest to longest since zones are always shorter than their
+    # subdomains.
+    zones = { }
+    for domain in sorted(domain_names, key=lambda d : len(d)):
+        for z in zones.values():
+            if domain.endswith("." + z):
+                # We found a parent domain already in the list.
+                zones[domain] = z
+                break
         else:
-            groups[2].append(d)
+            # 'break' did not occur: there is no parent domain, so it is its
+            # own zone.
+            zones[domain] = domain
 
-    # Within each group, sort parent domains before subdomains and after that sort lexicographically.
-    def sort_group(group):
-        # Find the top-most domains.
-        top_domains = sorted(d for d in group if len([s for s in group if d.endswith("." + s)]) == 0)
-        ret = []
-        for d in top_domains:
-            ret.append(d)
-            ret.extend( sort_group([s for s in group if s.endswith("." + d)]) )
-        return ret
-        
-    groups = [sort_group(g) for g in groups]
+    # Sort the zones.
+    zone_domains = sorted(zones.values(),
+      key = lambda d : (
+        # PRIMARY_HOSTNAME or the zone that contains it is always first.
+        not (d == env['PRIMARY_HOSTNAME'] or env['PRIMARY_HOSTNAME'].endswith("." + d)),
 
-    return groups[0] + groups[1] + groups[2]
+        # Then just dumb lexicographically.
+        d,
+      ))
+
+    # Now sort the domain names that fall within each zone.
+    domain_names = sorted(domain_names,
+      key = lambda d : (
+        # First by zone.
+        zone_domains.index(zones[d]),
+
+        # PRIMARY_HOSTNAME is always first within the zone that contains it.
+        d != env['PRIMARY_HOSTNAME'],
+
+        # Followed by any of its subdomains.
+        not d.endswith("." + env['PRIMARY_HOSTNAME']),
+
+        # Then in right-to-left lexicographic order of the .-separated parts of the name.
+        list(reversed(d.split("."))),
+      ))
+    
+    return domain_names
 
 def sort_email_addresses(email_addresses, env):
     email_addresses = set(email_addresses)
@@ -61,76 +105,6 @@ def sort_email_addresses(email_addresses, env):
         email_addresses -= domain_emails
     ret.extend(sorted(email_addresses)) # whatever is left
     return ret
-
-def exclusive_process(name):
-    # Ensure that a process named `name` does not execute multiple
-    # times concurrently.
-    import os, sys, atexit
-    pidfile = '/var/run/mailinabox-%s.pid' % name
-    mypid = os.getpid()
-
-    # Attempt to get a lock on ourself so that the concurrency check
-    # itself is not executed in parallel.
-    with open(__file__, 'r+') as flock:
-        # Try to get a lock. This blocks until a lock is acquired. The
-        # lock is held until the flock file is closed at the end of the
-        # with block.
-        os.lockf(flock.fileno(), os.F_LOCK, 0)
-
-        # While we have a lock, look at the pid file. First attempt
-        # to write our pid to a pidfile if no file already exists there.
-        try:
-            with open(pidfile, 'x') as f:
-                # Successfully opened a new file. Since the file is new
-                # there is no concurrent process. Write our pid.
-                f.write(str(mypid))
-                atexit.register(clear_my_pid, pidfile)
-                return
-        except FileExistsError:
-            # The pid file already exixts, but it may contain a stale
-            # pid of a terminated process.
-            with open(pidfile, 'r+') as f:
-                # Read the pid in the file.
-                existing_pid = None
-                try:
-                    existing_pid = int(f.read().strip())
-                except ValueError:
-                    pass # No valid integer in the file.
-
-                # Check if the pid in it is valid.
-                if existing_pid:
-                    if is_pid_valid(existing_pid):
-                        print("Another %s is already running (pid %d)." % (name, existing_pid), file=sys.stderr)
-                        sys.exit(1)
-
-                # Write our pid.
-                f.seek(0)
-                f.write(str(mypid))
-                f.truncate()
-                atexit.register(clear_my_pid, pidfile)
- 
-
-def clear_my_pid(pidfile):
-    import os
-    os.unlink(pidfile)
-
-
-def is_pid_valid(pid):
-    """Checks whether a pid is a valid process ID of a currently running process."""
-    # adapted from http://stackoverflow.com/questions/568271/how-to-check-if-there-exists-a-process-with-a-given-pid
-    import os, errno
-    if pid <= 0: raise ValueError('Invalid PID.')
-    try:
-        os.kill(pid, 0)
-    except OSError as err:
-        if err.errno == errno.ESRCH: # No such process
-            return False
-        elif err.errno == errno.EPERM: # Not permitted to send signal
-            return True
-        else: # EINVAL
-            raise
-    else:
-        return True
 
 def shell(method, cmd_args, env={}, capture_stderr=False, return_bytes=False, trap=False, input=None):
     # A safe way to execute processes.
@@ -200,3 +174,18 @@ def wait_for_service(port, public, env, timeout):
 			if time.perf_counter() > start+timeout:
 				return False
 		time.sleep(min(timeout/4, 1))
+
+def fix_boto():
+	# Google Compute Engine instances install some Python-2-only boto plugins that
+	# conflict with boto running under Python 3. Disable boto's default configuration
+	# file prior to importing boto so that GCE's plugin is not loaded:
+	import os
+	os.environ["BOTO_CONFIG"] = "/etc/boto3.cfg"
+
+
+if __name__ == "__main__":
+	from web_update import get_web_domains
+	env = load_environment()
+	domains = get_web_domains(env)
+	for domain in domains:
+		print(domain)

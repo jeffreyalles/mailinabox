@@ -9,17 +9,10 @@
 
         <meta name="robots" content="noindex, nofollow">
 
-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.0/css/bootstrap.min.css">
+        <link rel="stylesheet" href="/admin/assets/bootstrap/css/bootstrap.min.css">
         <style>
-            @import url(https://fonts.googleapis.com/css?family=Raleway:400,700);
-            @import url(https://fonts.googleapis.com/css?family=Ubuntu:300);
-
-	    html {
+	    body {
 		overflow-y: scroll;
-	    }
-
-            body {
-                padding-top: 50px;
                 padding-bottom: 20px;
             }
 
@@ -28,7 +21,7 @@
             }
 
             h1, h2, h3, h4 {
-              font-family: Raleway, sans-serif;
+              font-family: sans-serif;
               font-weight: bold;
             }
 
@@ -69,16 +62,46 @@
 	    ol li {
 	       margin-bottom: 1em;
 	    }
+          
+            .if-logged-in { display: none; }
+            .if-logged-in-admin { display: none; }
+
+      /* The below only gets used if it is supported */
+      @media (prefers-color-scheme: dark) {
+        /* Invert invert lightness but not hue */
+        html {
+          filter: invert(100%) hue-rotate(180deg);
+        }
+
+        /* Set explicit background color (necessary for Firefox) */
+        html {
+          background-color: #111;
+        }
+          
+        /* Override Boostrap theme here to give more contrast. The black turns to white by the filter. */
+        .form-control {
+          color: black !important;
+        }          
+
+        /* Revert the invert for the navbar */
+        button, div.navbar {
+          filter: invert(100%) hue-rotate(180deg);
+        }
+          
+        /* Revert the revert for the dropdowns */
+        ul.dropdown-menu {
+          filter: invert(100%) hue-rotate(180deg);
+        }
+      }
         </style>
-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.0/css/bootstrap-theme.min.css">
-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+        <link rel="stylesheet" href="/admin/assets/bootstrap/css/bootstrap-theme.min.css">
     </head>
     <body>
 
     <!--[if lt IE 8]><p>Internet Explorer version 8 or any modern web browser is required to use this website, sorry.<![endif]-->
     <!--[if gt IE 7]><!-->
 
-    <div class="navbar navbar-inverse navbar-fixed-top" role="navigation">
+    <div class="navbar navbar-inverse navbar-static-top" role="navigation">
       <div class="container">
         <div class="navbar-header">
           <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target=".navbar-collapse">
@@ -91,39 +114,46 @@
         </div>
         <div class="navbar-collapse collapse">
           <ul class="nav navbar-nav">
-            <li class="dropdown">
+            <li class="dropdown if-logged-in-admin">
               <a href="#" class="dropdown-toggle" data-toggle="dropdown">System <b class="caret"></b></a>
               <ul class="dropdown-menu">
                 <li><a href="#system_status" onclick="return show_panel(this);">Status Checks</a></li>
-                <li><a href="#ssl" onclick="return show_panel(this);">SSL Certificates</a></li>
+                <li><a href="#tls" onclick="return show_panel(this);">TLS (SSL) Certificates</a></li>
                 <li><a href="#system_backup" onclick="return show_panel(this);">Backup Status</a></li>
                 <li class="divider"></li>
                 <li class="dropdown-header">Advanced Pages</li>
                 <li><a href="#custom_dns" onclick="return show_panel(this);">Custom DNS</a></li>
                 <li><a href="#external_dns" onclick="return show_panel(this);">External DNS</a></li>
-                <li><a href="/admin/munin">Munin Monitoring</a></li>
+                <li><a href="#munin" onclick="return show_panel(this);">Munin Monitoring</a></li>
               </ul>
             </li>
-            <li class="dropdown">
-              <a href="#" class="dropdown-toggle" data-toggle="dropdown">Mail <b class="caret"></b></a>
+            <li><a href="#mail-guide" onclick="return show_panel(this);" class="if-logged-in-not-admin">Mail</a></li>
+            <li class="dropdown if-logged-in-admin">
+              <a href="#" class="dropdown-toggle" data-toggle="dropdown">Mail &amp; Users <b class="caret"></b></a>
               <ul class="dropdown-menu">
                 <li><a href="#mail-guide" onclick="return show_panel(this);">Instructions</a></li>
                 <li><a href="#users" onclick="return show_panel(this);">Users</a></li>
                 <li><a href="#aliases" onclick="return show_panel(this);">Aliases</a></li>
+                <li class="divider"></li>
+                <li class="dropdown-header">Your Account</li>
+                <li><a href="#mfa" onclick="return show_panel(this);">Two-Factor Authentication</a></li>
               </ul>
             </li>
-            <li><a href="#sync_guide" onclick="return show_panel(this);">Contacts/Calendar</a></li>
-            <li><a href="#web" onclick="return show_panel(this);">Web</a></li>
-            <li><a href="#version" onclick="return show_panel(this);">Version</a></li>
+            <li><a href="#sync_guide" onclick="return show_panel(this);" class="if-logged-in">Contacts/Calendar</a></li>
+            <li><a href="#web" onclick="return show_panel(this);" class="if-logged-in-admin">Web</a></li>
           </ul>
           <ul class="nav navbar-nav navbar-right">
-            <li><a href="#" onclick="do_logout(); return false;" style="color: white">Log out?</a></li>
+            <li class="if-logged-in"><a href="#" onclick="do_logout(); return false;" style="color: white">Log out</a></li>
           </ul>
         </div><!--/.navbar-collapse -->
       </div>
     </div>
 
     <div class="container">
+      <div id="panel_welcome" class="admin_panel">
+      {% include "welcome.html" %}
+      </div>
+
       <div id="panel_system_status" class="admin_panel">
       {% include "system-status.html" %}
       </div>
@@ -138,6 +168,10 @@
 
       <div id="panel_custom_dns" class="admin_panel">
       {% include "custom-dns.html" %}
+      </div>
+
+      <div id="panel_mfa" class="admin_panel">
+      {% include "mfa.html" %}
       </div>
 
       <div id="panel_login" class="admin_panel">
@@ -164,12 +198,12 @@
       {% include "web.html" %}
       </div>
 
-      <div id="panel_ssl" class="admin_panel">
+      <div id="panel_tls" class="admin_panel">
       {% include "ssl.html" %}
       </div>
 
-      <div id="panel_version" class="admin_panel">
-      {% include "version.html" %}
+      <div id="panel_munin" class="admin_panel">
+      {% include "munin.html" %}
       </div>
 
       <hr>
@@ -204,8 +238,8 @@
           </div>
         </div>
 
-        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
-        <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.0/js/bootstrap.min.js"></script>
+        <script src="/admin/assets/jquery.min.js"></script>
+        <script src="/admin/assets/bootstrap/js/bootstrap.min.js"></script>
 
         <script>
 var global_modal_state = null;
@@ -215,8 +249,8 @@ $(function() {
   $('#global_modal').on('shown.bs.modal', function (e) {
     // set focus to first input in the global modal's body
     var input = $('#global_modal .modal-body input');
-    if (input.length > 0) $(input[0]).focus();  
-  })  
+    if (input.length > 0) $(input[0]).focus();
+  })
   $('#global_modal .btn-danger').click(function() {
     // Don't take action now. Wait for the modal to be totally hidden
     // so that we don't attempt to show another modal while this one
@@ -231,7 +265,7 @@ $(function() {
     if (global_modal_state == null) global_modal_state = 1; // cancel if the user hit ESC or clicked outside of the modal
     if (global_modal_funcs && global_modal_funcs[global_modal_state])
       global_modal_funcs[global_modal_state]();
-  })  
+  })
 })
 
 function show_modal_error(title, message, callback) {
@@ -276,7 +310,7 @@ function show_modal_confirm(title, question, verb, yes_callback, cancel_callback
 }
 
 var ajax_num_executing_requests = 0;
-function ajax(options) {
+function ajax_with_indicator(options) {
   setTimeout("if (ajax_num_executing_requests > 0) $('#ajax_loading_indicator').fadeIn()", 100);
   function hide_loading_indicator() {
     ajax_num_executing_requests--;
@@ -294,7 +328,7 @@ function ajax(options) {
   };
   options.error = function(jqxhr) {
     hide_loading_indicator();
-    if (!old_error) 
+    if (!old_error)
       show_modal_error("Error", "Something went wrong, sorry.")
     else
       old_error(jqxhr.responseText, jqxhr);
@@ -304,8 +338,8 @@ function ajax(options) {
   return false; // handy when called from onclick
 }
 
-var api_credentials = ["", ""];
-function api(url, method, data, callback, callback_error) {
+var api_credentials = null;
+function api(url, method, data, callback, callback_error, headers) {
   // from http://www.webtoolkit.info/javascript-base64.html
   function base64encode(input) {
     _keyStr = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
@@ -338,12 +372,12 @@ function api(url, method, data, callback, callback_error) {
       show_modal_error("Error", "Something went wrong, sorry.")
   }
 
-  ajax({
+  ajax_with_indicator({
     url: "/admin" + url,
     method: method,
     cache: false,
     data: data,
-
+    headers: headers,
     // the custom DNS api sends raw POST/PUT bodies --- prevent URL-encoding
     processData: typeof data != "string",
     mimeType: typeof data == "string" ? "text/plain; charset=ascii" : null,
@@ -352,9 +386,10 @@ function api(url, method, data, callback, callback_error) {
       // We don't store user credentials in a cookie to avoid the hassle of CSRF
       // attacks. The Authorization header only gets set in our AJAX calls triggered
       // by user actions.
-      xhr.setRequestHeader(
-        'Authorization',
-        'Basic ' + base64encode(api_credentials[0] + ':' + api_credentials[1]));
+      if (api_credentials)
+        xhr.setRequestHeader(
+          'Authorization',
+          'Basic ' + base64encode(api_credentials.username + ':' + api_credentials.session_key));
     },
     success: callback,
     error: callback_error || default_error,
@@ -371,6 +406,25 @@ function api(url, method, data, callback, callback_error) {
 
 var current_panel = null;
 var switch_back_to_panel = null;
+
+function do_logout() {
+  // Clear the session from the backend.
+  api("/logout", "POST");
+
+  // Forget the token.
+  api_credentials = null;
+  if (typeof localStorage != 'undefined')
+    localStorage.removeItem("miab-cp-credentials");
+  if (typeof sessionStorage != 'undefined')
+    sessionStorage.removeItem("miab-cp-credentials");
+
+  // Return to the start.
+  show_panel('login');
+
+  // Reset menus.
+  show_hide_menus();
+}
+
 function show_panel(panelid) {
   if (panelid.getAttribute)
     // we might be passed an HTMLElement <a>.
@@ -391,14 +445,22 @@ function show_panel(panelid) {
 
 $(function() {
   // Recall saved user credentials.
-  if (typeof sessionStorage != 'undefined' && sessionStorage.getItem("miab-cp-credentials"))
-    api_credentials = sessionStorage.getItem("miab-cp-credentials").split(":");
-  else if (typeof localStorage != 'undefined' && localStorage.getItem("miab-cp-credentials"))
-    api_credentials = localStorage.getItem("miab-cp-credentials").split(":");
+  try {
+    if (typeof sessionStorage != 'undefined' && sessionStorage.getItem("miab-cp-credentials"))
+      api_credentials = JSON.parse(sessionStorage.getItem("miab-cp-credentials"));
+    else if (typeof localStorage != 'undefined' && localStorage.getItem("miab-cp-credentials"))
+      api_credentials = JSON.parse(localStorage.getItem("miab-cp-credentials"));
+  } catch (_) {
+  }
+
+  // Toggle menu state.
+  show_hide_menus();
 
   // Recall what the user was last looking at.
-  if (typeof localStorage != 'undefined' && localStorage.getItem("miab-cp-lastpanel")) {
+  if (api_credentials != null && typeof localStorage != 'undefined' && localStorage.getItem("miab-cp-lastpanel")) {
     show_panel(localStorage.getItem("miab-cp-lastpanel"));
+  } else if (api_credentials != null) {
+    show_panel('welcome');
   } else {
     show_panel('login');
   }

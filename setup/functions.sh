@@ -1,19 +1,28 @@
+# Turn on "strict mode." See http://redsymbol.net/articles/unofficial-bash-strict-mode/.
+# -e: exit if any command unexpectedly fails.
+# -u: exit if we have a variable typo.
+# -o pipefail: don't ignore errors in the non-last command in a pipeline
+set -euo pipefail
+
 function hide_output {
 	# This function hides the output of a command unless the command fails
 	# and returns a non-zero exit code.
 
 	# Get a temporary file.
-	OUTPUT=$(tempfile)
+	OUTPUT=$(mktemp)
 
-	# Execute command, redirecting stderr/stdout to the temporary file.
-	$@ &> $OUTPUT
+	# Execute command, redirecting stderr/stdout to the temporary file. Since we
+	# check the return code ourselves, disable 'set -e' temporarily.
+	set +e
+	"$@" &> $OUTPUT
+	E=$?
+	set -e
 
 	# If the command failed, show the output that was captured in the temporary file.
-	E=$?
 	if [ $E != 0 ]; then
 		# Something failed.
 		echo
-		echo FAILED: $@
+		echo FAILED: "$@"
 		echo -----------------------------------------
 		cat $OUTPUT
 		echo -----------------------------------------
@@ -39,33 +48,12 @@ function apt_get_quiet {
 }
 
 function apt_install {
-	# Report any packages already installed.
-	PACKAGES=$@
-	TO_INSTALL=""
-	ALREADY_INSTALLED=""
-	for pkg in $PACKAGES; do
-		if dpkg -s $pkg 2>/dev/null | grep "^Status: install ok installed" > /dev/null; then
-			if [[ ! -z "$ALREADY_INSTALLED" ]]; then ALREADY_INSTALLED="$ALREADY_INSTALLED, "; fi
-			ALREADY_INSTALLED="$ALREADY_INSTALLED$pkg (`dpkg -s $pkg | grep ^Version: | sed -e 's/.*: //'`)"
-		else
-			TO_INSTALL="$TO_INSTALL""$pkg "
-		fi
-	done
-
-	# List the packages already installed.
-	if [[ ! -z "$ALREADY_INSTALLED" ]]; then
-		echo already installed: $ALREADY_INSTALLED
-	fi
-
-	# List the packages about to be installed.
-	if [[ ! -z "$TO_INSTALL" ]]; then
-		echo installing $TO_INSTALL...
-	fi
-
-	# We still include the whole original package list in the apt-get command in
-	# case it wants to upgrade anything, I guess? Maybe we can remove it. Doesn't normally make
-	# a difference.
-	apt_get_quiet install $PACKAGES
+	# Install a bunch of packages. We used to report which packages were already
+	# installed and which needed installing, before just running an 'apt-get
+	# install' for all of the packages.  Calling `dpkg` on each package is slow,
+	# and doesn't affect what we actually do, except in the messages, so let's
+	# not do that anymore.
+	apt_get_quiet install "$@"
 }
 
 function get_default_hostname {
@@ -86,7 +74,7 @@ function get_publicip_from_web_service {
 	#
 	# Pass '4' or '6' as an argument to this function to specify
 	# what type of address to get (IPv4, IPv6).
-	curl -$1 --fail --silent --max-time 15 icanhazip.com 2>/dev/null
+	curl -$1 --fail --silent --max-time 15 icanhazip.com 2>/dev/null || /bin/true
 }
 
 function get_default_privateip {
@@ -129,7 +117,7 @@ function get_default_privateip {
 	if [ "$1" == "6" ]; then target=2001:4860:4860::8888; fi
 
 	# Get the route information.
-	route=$(ip -$1 -o route get $target | grep -v unreachable)
+	route=$(ip -$1 -o route get $target 2>/dev/null | grep -v unreachable)
 
 	# Parse the address out of the route information.
 	address=$(echo $route | sed "s/.* src \([^ ]*\).*/\1/")
@@ -142,13 +130,19 @@ function get_default_privateip {
 	fi
 
 	echo $address
-		
 }
 
 function ufw_allow {
-	if [ -z "$DISABLE_FIREWALL" ]; then
+	if [ -z "${DISABLE_FIREWALL:-}" ]; then
 		# ufw has completely unhelpful output
-		ufw allow $1 > /dev/null;
+		ufw allow "$1" > /dev/null;
+	fi
+}
+
+function ufw_limit {
+	if [ -z "${DISABLE_FIREWALL:-}" ]; then
+		# ufw has completely unhelpful output
+		ufw limit "$1" > /dev/null;
 	fi
 }
 
@@ -165,10 +159,13 @@ function input_box {
 	# input_box "title" "prompt" "defaultvalue" VARIABLE
 	# The user's input will be stored in the variable VARIABLE.
 	# The exit code from dialog will be stored in VARIABLE_EXITCODE.
+	# Temporarily turn off 'set -e' because we need the dialog return code.
 	declare -n result=$4
 	declare -n result_code=$4_EXITCODE
+	set +e
 	result=$(dialog --stdout --title "$1" --inputbox "$2" 0 0 "$3")
 	result_code=$?
+	set -e
 }
 
 function input_menu {
@@ -178,8 +175,10 @@ function input_menu {
 	declare -n result=$4
 	declare -n result_code=$4_EXITCODE
 	local IFS=^$'\n'
+	set +e
 	result=$(dialog --stdout --title "$1" --menu "$2" 0 0 0 $3)
 	result_code=$?
+	set -e
 }
 
 function wget_verify {
@@ -190,7 +189,7 @@ function wget_verify {
 	DEST=$3
 	CHECKSUM="$HASH  $DEST"
 	rm -f $DEST
-	wget -q -O $DEST $URL || exit 1
+	hide_output wget -O $DEST $URL
 	if ! echo "$CHECKSUM" | sha1sum --check --strict > /dev/null; then
 		echo "------------------------------------------------------------"
 		echo "Download of $URL did not match expected checksum."

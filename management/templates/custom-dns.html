@@ -10,7 +10,7 @@
 
 <p>It is possible to set custom DNS records on domains hosted here.</p>
 
-<h3>Set Custom DNS Records</h3>
+<h3>Set custom DNS records</h3>
 
 <p>You can set additional DNS records, such as if you have a website running on another server, to add DKIM records for external mail providers, or for various confirmation-of-ownership tests.</p>
 
@@ -31,11 +31,15 @@
     <label for="customdnsType" class="col-sm-1 control-label">Type</label>
     <div class="col-sm-10">
       <select id="customdnsType" class="form-control" style="max-width: 400px" onchange="show_customdns_rtype_hint()">
-        <option value="A" data-hint="Enter an IPv4 address (i.e. a dotted quad, such as 123.456.789.012).">A (IPv4 address)</option>
-        <option value="AAAA" data-hint="Enter an IPv6 address.">AAAA (IPv6 address)</option>
+        <option value="A" data-hint="Enter an IPv4 address (i.e. a dotted quad, such as 123.456.789.012).  The 'local' alias sets the record to this box's public IPv4 address.">A (IPv4 address)</option>
+        <option value="AAAA" data-hint="Enter an IPv6 address.  The 'local' alias sets the record to this box's public IPv6 address.">AAAA (IPv6 address)</option>
+        <option value="CAA" data-hint="Enter a CA that can issue certificates for this domain in the form of FLAG TAG VALUE. (0 issuewild &quot;letsencrypt.org&quot;)">CAA (Certificate Authority Authorization)</option>
         <option value="CNAME" data-hint="Enter another domain name followed by a period at the end (e.g. mypage.github.io.).">CNAME (DNS forwarding)</option>
         <option value="TXT" data-hint="Enter arbitrary text.">TXT (text record)</option>
-        <option value="MX" data-hint="Enter record in the form of PRIORIY DOMAIN., including trailing period (e.g. 20 mx.example.com.).">MX (mail exchanger)</option>
+        <option value="MX" data-hint="Enter record in the form of PRIORITY DOMAIN., including trailing period (e.g. 20 mx.example.com.).">MX (mail exchanger)</option>
+        <option value="SRV" data-hint="Enter record in the form of PRIORITY WEIGHT PORT TARGET., including trailing period (e.g. 10 10 5060 sip.example.com.).">SRV (service record)</option>
+        <option value="SSHFP" data-hint="Enter record in the form of ALGORITHM TYPE FINGERPRINT.">SSHFP (SSH fingerprint record)</option>
+        <option value="NS" data-hint="Enter a hostname to which this subdomain should be delegated to">NS (DNS subdomain delegation)</option>
       </select>
     </div>
   </div>
@@ -53,7 +57,13 @@
   </div>
 </form>
 
-<table id="custom-dns-current" class="table" style="width: auto; display: none">
+<div style="text-align: right; font-size; 90%; margin-top: 1em;">
+  sort by:
+  <a href="#" onclick="window.miab_custom_dns_data_sort_order='qname'; show_current_custom_dns_update_after_sort(); return false;">domain name</a>
+  |
+  <a href="#" onclick="window.miab_custom_dns_data_sort_order='created'; show_current_custom_dns_update_after_sort(); return false;">created</a>
+</div>
+<table id="custom-dns-current" class="table" style="width: auto; display: none; margin-top: 0;">
   <thead>
     <th>Domain Name</th>
     <th>Record Type</th>
@@ -65,9 +75,10 @@
   </tbody>
 </table>
 
-<h3>Using a Secondary Nameserver</h3>
+<h3>Using a secondary nameserver</h3>
 
-<p>If your TLD requires you to have two separate nameservers, you can either set up a secondary (aka &ldquo;slave&rdquo;) nameserver or, alternatively, set up <a href="#" onclick="return show_panel('external_dns')">external DNS</a> and ignore the DNS server on this box. If you choose to use a seconday/slave nameserver, you must find a seconday/slave nameserver service provider. Your domain name registrar or virtual cloud provider may provide this service for you. Once you set up the seconday/slave nameserver service, enter the hostname of <em>their</em> secondary nameserver:</p>
+<p>If your TLD requires you to have two separate nameservers, you can either set up <a href="#" onclick="return show_panel('external_dns')">external DNS</a> and ignore the DNS server on this box entirely, or use the DNS server on this box but add a secondary (aka &ldquo;slave&rdquo;) nameserver.</p>
+<p>If you choose to use a secondary nameserver, you must find a secondary nameserver service provider. Your domain name registrar or virtual cloud provider may provide this service for you. Once you set up the secondary nameserver service, enter the hostname (not the IP address) of <em>their</em> secondary nameserver in the box below.</p>
 
 <form class="form-horizontal" role="form" onsubmit="do_set_secondary_dns(); return false;">
   <div class="form-group">
@@ -81,9 +92,15 @@
       <button type="submit" class="btn btn-primary">Update</button>
     </div>
   </div>
-  <div id="secondarydns-clear-instructions" class="form-group" style="display: none">
+  <div class="form-group">
     <div class="col-sm-offset-1 col-sm-11">
-      <p class="small">Clear the input field above and click Update to use this machine itself as secondary DNS, which is the default/normal setup.</p>
+      <p class="small">
+        Multiple secondary servers can be separated with commas or spaces (i.e., <code>ns2.hostingcompany.com ns3.hostingcompany.com</code>).
+        To enable zone transfers to additional servers without listing them as secondary nameservers, add an IP address or subnet using <code>xfr:10.20.30.40</code> or <code>xfr:10.0.0.0/8</code>.
+      </p>
+      <p id="secondarydns-clear-instructions" style="display: none" class="small">
+        Clear the input field above and click Update to use this machine itself as secondary DNS, which is the default/normal setup.
+      </p>
     </div>
   </div>
 </form>
@@ -116,7 +133,7 @@
 <tr><td>email</td> <td>The email address of any administrative user here.</td></tr>
 <tr><td>password</td> <td>That user&rsquo;s password.</td></tr>
 <tr><td>qname</td> <td>The fully qualified domain name for the record you are trying to set. It must be one of the domain names or a subdomain of one of the domain names hosted on this box. (Add mail users or aliases to add new domains.)</td></tr>
-<tr><td>rtype</td> <td>The resource type. Defaults to <code>A</code> if omitted. Possible values: <code>A</code> (an IPv4 address), <code>AAAA</code> (an IPv6 address), <code>TXT</code> (a text string), <code>CNAME</code> (an alias, which is a fully qualified domain name &mdash; don&rsquo;t forget the final period), <code>MX</code>, or <code>SRV</code>.</td></tr>
+<tr><td>rtype</td> <td>The resource type. Defaults to <code>A</code> if omitted. Possible values: <code>A</code> (an IPv4 address), <code>AAAA</code> (an IPv6 address), <code>TXT</code> (a text string), <code>CNAME</code> (an alias, which is a fully qualified domain name &mdash; don&rsquo;t forget the final period), <code>MX</code>, <code>SRV</code>, <code>SSHFP</code>, <code>CAA</code> or <code>NS</code>.</td></tr>
 <tr><td>value</td> <td>For PUT, POST, and DELETE, the record&rsquo;s value. If the <code>rtype</code> is <code>A</code> or <code>AAAA</code> and <code>value</code> is empty or omitted, the IPv4 or IPv6 address of the remote host is used (be sure to use the <code>-4</code> or <code>-6</code> options to curl). This is handy for dynamic DNS!</td></tr>
 </table>
 
@@ -152,8 +169,8 @@ function show_custom_dns() {
     "GET",
     { },
     function(data) {
-      $('#secondarydnsHostname').val(data.hostname ? data.hostname : '');
-      $('#secondarydns-clear-instructions').toggle(data.hostname != null);
+      $('#secondarydnsHostname').val(data.hostnames.join(' '));
+      $('#secondarydns-clear-instructions').toggle(data.hostnames.length > 0);
     });
 
   api(
@@ -181,20 +198,38 @@ function show_current_custom_dns() {
         $('#custom-dns-current').fadeIn();
       else
         $('#custom-dns-current').fadeOut();
+      window.miab_custom_dns_data = data;
+      show_current_custom_dns_update_after_sort();
+    });
+}
 
-      $('#custom-dns-current').find("tbody").text('');
+function show_current_custom_dns_update_after_sort() {
+      var data = window.miab_custom_dns_data;
+      var sort_key = window.miab_custom_dns_data_sort_order || "qname";
+
+      data.sort(function(a, b) { return a["sort-order"][sort_key] - b["sort-order"][sort_key] });
+
+      var tbody = $('#custom-dns-current').find("tbody");
+      tbody.text('');
+      var last_zone = null;
       for (var i = 0; i < data.length; i++) {
+        if (sort_key == "qname" && data[i].zone != last_zone) {
+          var r = $("<tr><th colspan=4 style='background-color: #EEE'></th></tr>");
+          r.find("th").text(data[i].zone);
+          tbody.append(r);
+          last_zone = data[i].zone;
+        }
+
         var tr = $("<tr/>");
-        $('#custom-dns-current').find("tbody").append(tr);
+        tbody.append(tr);
         tr.attr('data-qname', data[i].qname);
         tr.attr('data-rtype', data[i].rtype);
         tr.attr('data-value', data[i].value);
         tr.append($('<td class="long"/>').text(data[i].qname));
         tr.append($('<td/>').text(data[i].rtype));
-        tr.append($('<td class="long"/>').text(data[i].value));
+        tr.append($('<td class="long" style="max-width: 40em"/>').text(data[i].value));
         tr.append($('<td>[<a href="#" onclick="return delete_custom_dns_record(this)">delete</a>]</td>'));
       }
-    });
 }
 
 function delete_custom_dns_record(elem) {
@@ -210,7 +245,7 @@ function do_set_secondary_dns() {
     "/dns/secondary-nameserver",
     "POST",
     {
-      hostname: $('#secondarydnsHostname').val()
+      hostnames: $('#secondarydnsHostname').val()
     },
     function(data) {
       if (data == "") return; // nothing updated

@@ -19,123 +19,167 @@ source /etc/mailinabox.conf # load global vars
 # and then we'll manually install roundcube from source.
 
 # These dependencies are from `apt-cache showpkg roundcube-core`.
+echo "Installing Roundcube (webmail)..."
 apt_install \
 	dbconfig-common \
-	php5 php5-sqlite php5-mcrypt php5-intl php5-json php5-common php-auth php-net-smtp php-net-socket php-net-sieve php-mail-mime php-crypt-gpg php5-gd php5-pspell \
-	tinymce libjs-jquery libjs-jquery-mousewheel libmagic1
-
-# We used to install Roundcube from Ubuntu, without triggering the dependencies #NODOC
-# on Apache and MySQL, by downloading the debs and installing them manually. #NODOC
-# Now that we're beyond that, get rid of those debs before installing from source. #NODOC
-apt-get purge -qq -y roundcube* #NODOC
+	php-cli php-sqlite3 php-intl php-json php-common php-curl php-ldap \
+	php-gd php-pspell tinymce libjs-jquery libjs-jquery-mousewheel libmagic1 php-mbstring
 
 # Install Roundcube from source if it is not already present or if it is out of date.
-# Combine the Roundcube version number with the commit hash of vacation_sieve to track
-# whether we have the latest version.
-VERSION=1.1.2
-HASH=df88deae691da3ecf3e9f0aee674c1f3042ea1eb
-VACATION_SIEVE_VERSION=91ea6f52216390073d1f5b70b5f6bea0bfaee7e5
-PERSISTENT_LOGIN_VERSION=117fbd8f93b56b2bf72ad055193464803ef3bc36
-UPDATE_KEY=$VERSION:$VACATION_SIEVE_VERSION:$PERSISTENT_LOGIN_VERSION
+# Combine the Roundcube version number with the commit hash of plugins to track
+# whether we have the latest version of everything.
+# For the latest versions, see:
+#   https://github.com/roundcube/roundcubemail/releases
+#   https://github.com/mfreiholz/persistent_login/commits/master
+#   https://github.com/stremlau/html5_notifier/commits/master
+#   https://github.com/mstilkerich/rcmcarddav/releases
+# The easiest way to get the package hashes is to run this script and get the hash from
+# the error message.
+VERSION=1.5.2
+HASH=208ce4ca0be423cc0f7070ff59bd03588b4439bf
+PERSISTENT_LOGIN_VERSION=59ca1b0d3a02cff5fa621c1ad581d15f9d642fe8
+HTML5_NOTIFIER_VERSION=68d9ca194212e15b3c7225eb6085dbcf02fd13d7 # version 0.6.4+
+CARDDAV_VERSION=4.3.0
+CARDDAV_HASH=4ad7df8843951062878b1375f77c614f68bc5c61
+
+UPDATE_KEY=$VERSION:$PERSISTENT_LOGIN_VERSION:$HTML5_NOTIFIER_VERSION:$CARDDAV_VERSION
+
+# paths that are often reused.
+RCM_DIR=/usr/local/lib/roundcubemail
+RCM_PLUGIN_DIR=${RCM_DIR}/plugins
+RCM_CONFIG=${RCM_DIR}/config/config.inc.php
+
 needs_update=0 #NODOC
 if [ ! -f /usr/local/lib/roundcubemail/version ]; then
 	# not installed yet #NODOC
 	needs_update=1 #NODOC
-elif [[ "$UPDATE_KEY" != `cat /usr/local/lib/roundcubemail/version` ]]; then
+elif [[ "$UPDATE_KEY" != $(cat /usr/local/lib/roundcubemail/version) ]]; then
 	# checks if the version is what we want
 	needs_update=1 #NODOC
 fi
 if [ $needs_update == 1 ]; then
+  # if upgrading from 1.3.x, clear the temp_dir
+  if [ -f /usr/local/lib/roundcubemail/version ]; then
+    if [ "$(cat /usr/local/lib/roundcubemail/version | cut -c1-3)" == '1.3' ]; then
+      find /var/tmp/roundcubemail/ -type f ! -name 'RCMTEMP*' -delete
+    fi
+  fi
+
 	# install roundcube
-	echo installing Roundcube webmail $VERSION...
 	wget_verify \
-		http://downloads.sourceforge.net/project/roundcubemail/roundcubemail/$VERSION/roundcubemail-$VERSION.tar.gz \
+		https://github.com/roundcube/roundcubemail/releases/download/$VERSION/roundcubemail-$VERSION-complete.tar.gz \
 		$HASH \
 		/tmp/roundcube.tgz
-	tar -C /usr/local/lib -zxf /tmp/roundcube.tgz
+	tar -C /usr/local/lib --no-same-owner -zxf /tmp/roundcube.tgz
 	rm -rf /usr/local/lib/roundcubemail
-	mv /usr/local/lib/roundcubemail-$VERSION/ /usr/local/lib/roundcubemail
+	mv /usr/local/lib/roundcubemail-$VERSION/ $RCM_DIR
 	rm -f /tmp/roundcube.tgz
 
-	# install roundcube autoreply/vacation plugin
-	git_clone https://github.com/arodier/Roundcube-Plugins.git $VACATION_SIEVE_VERSION plugins/vacation_sieve /usr/local/lib/roundcubemail/plugins/vacation_sieve
-
 	# install roundcube persistent_login plugin
-	git_clone https://github.com/mfreiholz/Roundcube-Persistent-Login-Plugin.git $PERSISTENT_LOGIN_VERSION '' /usr/local/lib/roundcubemail/plugins/persistent_login
+	git_clone https://github.com/mfreiholz/Roundcube-Persistent-Login-Plugin.git $PERSISTENT_LOGIN_VERSION '' ${RCM_PLUGIN_DIR}/persistent_login
+
+	# install roundcube html5_notifier plugin
+	git_clone https://github.com/kitist/html5_notifier.git $HTML5_NOTIFIER_VERSION '' ${RCM_PLUGIN_DIR}/html5_notifier
+
+	# download and verify the full release of the carddav plugin
+	wget_verify \
+		https://github.com/blind-coder/rcmcarddav/releases/download/v${CARDDAV_VERSION}/carddav-v${CARDDAV_VERSION}.tar.gz \
+		$CARDDAV_HASH \
+		/tmp/carddav.tar.gz
+
+	# unzip and cleanup
+	tar -C ${RCM_PLUGIN_DIR} -zxf /tmp/carddav.tar.gz
+	rm -f /tmp/carddav.tar.gz
 
 	# record the version we've installed
-	echo $UPDATE_KEY > /usr/local/lib/roundcubemail/version
+	echo $UPDATE_KEY > ${RCM_DIR}/version
 fi
 
 # ### Configuring Roundcube
 
-# Generate a safe 24-character secret key of safe characters.
-SECRET_KEY=$(dd if=/dev/random bs=1 count=18 2>/dev/null | base64 | fold -w 24 | head -n 1)
+# Generate a secret key of PHP-string-safe characters appropriate
+# for the cipher algorithm selected below.
+SECRET_KEY=$(dd if=/dev/urandom bs=1 count=32 2>/dev/null | base64 | sed s/=//g)
 
 # Create a configuration file.
 #
 # For security, temp and log files are not stored in the default locations
 # which are inside the roundcube sources directory. We put them instead
 # in normal places.
-cat > /usr/local/lib/roundcubemail/config/config.inc.php <<EOF;
+cat > $RCM_CONFIG <<EOF;
 <?php
 /*
  * Do not edit. Written by Mail-in-a-Box. Regenerated on updates.
  */
 \$config = array();
 \$config['log_dir'] = '/var/log/roundcubemail/';
-\$config['temp_dir'] = '/tmp/roundcubemail/';
+\$config['temp_dir'] = '/var/tmp/roundcubemail/';
 \$config['db_dsnw'] = 'sqlite:///$STORAGE_ROOT/mail/roundcube/roundcube.sqlite?mode=0640';
 \$config['default_host'] = 'ssl://localhost';
 \$config['default_port'] = 993;
+\$config['imap_conn_options'] = array(
+  'ssl'         => array(
+     'verify_peer'  => false,
+     'verify_peer_name'  => false,
+   ),
+ );
 \$config['imap_timeout'] = 15;
-\$config['smtp_server'] = 'tls://localhost';
-\$config['smtp_port'] = 587;
-\$config['smtp_user'] = '%u';
-\$config['smtp_pass'] = '%p';
+\$config['smtp_server'] = 'tls://127.0.0.1';
+\$config['smtp_conn_options'] = array(
+  'ssl'         => array(
+     'verify_peer'  => false,
+     'verify_peer_name'  => false,
+   ),
+ );
 \$config['support_url'] = 'https://mailinabox.email/';
-\$config['product_name'] = 'Mail-in-a-Box/Roundcube Webmail';
-\$config['des_key'] = '$SECRET_KEY';
-\$config['plugins'] = array('archive', 'zipdownload', 'password', 'managesieve', 'jqueryui', 'vacation_sieve', 'persistent_login');
-\$config['skin'] = 'classic';
+\$config['product_name'] = '$PRIMARY_HOSTNAME Webmail';
+\$config['cipher_method'] = 'AES-256-CBC'; # persistent login cookie and potentially other things
+\$config['des_key'] = '$SECRET_KEY'; # 37 characters -> ~256 bits for AES-256, see above
+\$config['plugins'] = array('html5_notifier', 'archive', 'zipdownload', 'password', 'managesieve', 'jqueryui', 'persistent_login', 'carddav');
+\$config['skin'] = 'elastic';
 \$config['login_autocomplete'] = 2;
+\$config['login_username_filter'] = 'email';
 \$config['password_charset'] = 'UTF-8';
 \$config['junk_mbox'] = 'Spam';
 ?>
 EOF
 
-# Configure vaction_sieve.
-cat > /usr/local/lib/roundcubemail/plugins/vacation_sieve/config.inc.php <<EOF;
+# Configure CardDav
+cat > ${RCM_PLUGIN_DIR}/carddav/config.inc.php <<EOF;
 <?php
 /* Do not edit. Written by Mail-in-a-Box. Regenerated on updates. */
-\$rcmail_config['vacation_sieve'] = array(
-    'date_format' => 'd/m/Y',
-    'working_hours' => array(8,18),
-    'msg_format' => 'text',
-    'logon_transform' => array('#([a-z])[a-z]+(\.|\s)([a-z])#i', '\$1\$3'),
-    'transfer' => array(
-        'mode' =>  'managesieve',
-        'ms_activate_script' => true,
-        'host'   => 'localhost',
-        'port'   => '4190',
-        'usetls' => false,
-        'path' => 'vacation',
-    )
+\$prefs['_GLOBAL']['hide_preferences'] = true;
+\$prefs['_GLOBAL']['suppress_version_warning'] = true;
+\$prefs['ownCloud'] = array(
+	 'name'         =>  'ownCloud',
+	 'username'     =>  '%u', // login username
+	 'password'     =>  '%p', // login password
+	 'url'          =>  'https://${PRIMARY_HOSTNAME}/cloud/remote.php/carddav/addressbooks/%u/contacts',
+	 'active'       =>  true,
+	 'readonly'     =>  false,
+	 'refresh_time' => '02:00:00',
+	 'fixed'        =>  array('username','password'),
+	 'preemptive_auth' => '1',
+	 'hide'        =>  false,
 );
+?>
 EOF
 
 # Create writable directories.
-mkdir -p /var/log/roundcubemail /tmp/roundcubemail $STORAGE_ROOT/mail/roundcube
-chown -R www-data.www-data /var/log/roundcubemail /tmp/roundcubemail $STORAGE_ROOT/mail/roundcube
+mkdir -p /var/log/roundcubemail /var/tmp/roundcubemail $STORAGE_ROOT/mail/roundcube
+chown -R www-data.www-data /var/log/roundcubemail /var/tmp/roundcubemail $STORAGE_ROOT/mail/roundcube
+
+# Ensure the log file monitored by fail2ban exists, or else fail2ban can't start.
+sudo -u www-data touch /var/log/roundcubemail/errors.log
 
 # Password changing plugin settings
-# The config comes empty by default, so we need the settings 
+# The config comes empty by default, so we need the settings
 # we're not planning to change in config.inc.dist...
-cp /usr/local/lib/roundcubemail/plugins/password/config.inc.php.dist \
-	/usr/local/lib/roundcubemail/plugins/password/config.inc.php
+cp ${RCM_PLUGIN_DIR}/password/config.inc.php.dist \
+	${RCM_PLUGIN_DIR}/password/config.inc.php
 
-tools/editconf.py /usr/local/lib/roundcubemail/plugins/password/config.inc.php \
-	"\$config['password_minimum_length']=6;" \
+tools/editconf.py ${RCM_PLUGIN_DIR}/password/config.inc.php \
+	"\$config['password_minimum_length']=8;" \
 	"\$config['password_db_dsn']='sqlite:///$STORAGE_ROOT/mail/users.sqlite';" \
 	"\$config['password_query']='UPDATE users SET password=%D WHERE email=%u';" \
 	"\$config['password_dovecotpw']='/usr/bin/doveadm pw';" \
@@ -149,9 +193,19 @@ usermod -a -G dovecot www-data
 # could use dovecot instead of www-data, but not sure it matters
 chown root.www-data $STORAGE_ROOT/mail
 chmod 775 $STORAGE_ROOT/mail
-chown root.www-data $STORAGE_ROOT/mail/users.sqlite 
-chmod 664 $STORAGE_ROOT/mail/users.sqlite 
+chown root.www-data $STORAGE_ROOT/mail/users.sqlite
+chmod 664 $STORAGE_ROOT/mail/users.sqlite
+
+# Fix Carddav permissions:
+chown -f -R root.www-data ${RCM_PLUGIN_DIR}/carddav
+# root.www-data need all permissions, others only read
+chmod -R 774 ${RCM_PLUGIN_DIR}/carddav
+
+# Run Roundcube database migration script (database is created if it does not exist)
+${RCM_DIR}/bin/updatedb.sh --dir ${RCM_DIR}/SQL --package roundcube
+chown www-data:www-data $STORAGE_ROOT/mail/roundcube/roundcube.sqlite
+chmod 664 $STORAGE_ROOT/mail/roundcube/roundcube.sqlite
 
 # Enable PHP modules.
-php5enmod mcrypt
-restart_service php5-fpm
+phpenmod -v php mcrypt imap
+restart_service php7.2-fpm

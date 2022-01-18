@@ -1,7 +1,6 @@
 <h2>Users</h2>
 
 <style>
-#user_table h4 { margin: 1em 0 0 0; }
 #user_table tr.account_inactive td.address { color: #888; text-decoration: line-through; }
 #user_table .actions { margin-top: .33em; font-size: 95%; }
 #user_table .account_inactive .if_active { display: none; }
@@ -31,10 +30,10 @@
   <button type="submit" class="btn btn-primary">Add User</button>
 </form>
 <ul style="margin-top: 1em; padding-left: 1.5em; font-size: 90%;">
-  <li>Passwords must be at least four characters and may not contain spaces.</li>
-  <li>Use <a href="javascript:show_panel('aliases')">aliases</a> to create email addresses that forward to existing accounts.</li>
+  <li>Passwords must be at least eight characters consisting of English letters and numbers only. For best results, <a href="#" onclick="return generate_random_password()">generate a random password</a>.</li>
+  <li>Use <a href="#" onclick="return show_panel('aliases')">aliases</a> to create email addresses that forward to existing accounts.</li>
   <li>Administrators get access to this control panel.</li>
-  <li>User accounts cannot contain any international (non-ASCII) characters, but <a href="javascript:show_panel('aliases')">aliases</a> can.</li>
+  <li>User accounts cannot contain any international (non-ASCII) characters, but <a href="#" onclick="return show_panel('aliases');">aliases</a> can.</li>
 </ul>
 
 <h3>Existing mail users</h3>
@@ -43,7 +42,6 @@
     <tr>
       <th width="50%">Email Address</th>
       <th>Actions</th>
-      <th>Mailbox Size</th>
     </tr>
   </thead>
   <tbody>
@@ -73,8 +71,6 @@
           archive account
         </a>
     </td>
-    <td class='mailboxsize'>
-    </td>
   </tr>
   <tr id="user-extra-template" class="if_inactive">
     <td colspan="3" style="border: 0; padding-top: 0">
@@ -84,6 +80,48 @@
   </table>
 </div>
 
+<h3>Mail user API (advanced)</h3>
+
+<p>Use your box&rsquo;s mail user API to add/change/remove users from the command-line or custom services you build.</p>
+
+<p>Usage:</p>
+
+<pre>curl -X <b>VERB</b> [-d "<b>parameters</b>"] --user {email}:{password} https://{{hostname}}/admin/mail/users[<b>action</b>]</pre>
+
+<p>Brackets denote an optional argument. Please note that the POST body <code>parameters</code> must be URL-encoded.</p>
+
+<p>The email and password given to the <code>--user</code> option must be an administrative user on this system.</p>
+
+<h4 style="margin-bottom: 0">Verbs</h4>
+
+<table class="table" style="margin-top: .5em">
+<thead><th>Verb</th> <th>Action</th><th></th></thead>
+<tr><td>GET</td><td><i>(none)</i></td> <td>Returns a list of existing mail users. Adding <code>?format=json</code> to the URL will give JSON-encoded results.</td></tr>
+<tr><td>POST</td><td>/add</td> <td>Adds a new mail user. Required POST-body parameters are <code>email</code> and <code>password</code>.</td></tr>
+<tr><td>POST</td><td>/remove</td> <td>Removes a mail user. Required POST-body parameter is <code>email</code>.</td></tr>
+<tr><td>POST</td><td>/privileges/add</td> <td>Used to make a mail user an admin. Required POST-body parameters are <code>email</code> and <code>privilege=admin</code>.</td></tr>
+<tr><td>POST</td><td>/privileges/remove</td> <td>Used to remove the admin privilege from a mail user. Required POST-body parameter is <code>email</code>.</td></tr>
+</table>
+
+<h4>Examples:</h4>
+
+<p>Try these examples. For simplicity the examples omit the <code>--user me@mydomain.com:yourpassword</code> command line argument which you must fill in with your administrative email address and password.</p>
+
+<pre># Gives a JSON-encoded list of all mail users
+curl -X GET https://{{hostname}}/admin/mail/users?format=json
+
+# Adds a new email user
+curl -X POST -d "email=new_user@mydomail.com" -d "password=s3curE_pa5Sw0rD" https://{{hostname}}/admin/mail/users/add
+
+# Removes a email user
+curl -X POST -d "email=new_user@mydomail.com" https://{{hostname}}/admin/mail/users/remove
+
+# Adds admin privilege to an email user
+curl -X POST -d "email=new_user@mydomail.com" -d "privilege=admin" https://{{hostname}}/admin/mail/users/privileges/add
+
+# Removes admin privilege from an email user
+curl -X POST -d "email=new_user@mydomail.com" https://{{hostname}}/admin/mail/users/privileges/remove
+</pre>
 
 <script>
 function show_users() {
@@ -95,8 +133,8 @@ function show_users() {
     function(r) {
       $('#user_table tbody').html("");
       for (var i = 0; i < r.length; i++) {
-        var hdr = $("<tr><td colspan='3'><h4/></td></tr>");
-        hdr.find('h4').text(r[i].domain);
+        var hdr = $("<tr><th colspan='2' style='background-color: #EEE'></th></tr>");
+        hdr.find('th').text(r[i].domain);
         $('#user_table tbody').append(hdr);
 
         for (var k = 0; k < r[i].users.length; k++) {
@@ -114,7 +152,6 @@ function show_users() {
 
           n.attr('data-email', user.email);
           n.find('.address').text(user.email)
-          n.find('.mailboxsize').text(nice_size(user.mailbox_size))
           n2.find('.restore_info tt').text(user.mailbox);
 
           if (user.status == 'inactive') continue;
@@ -166,12 +203,12 @@ function users_set_password(elem) {
   var email = $(elem).parents('tr').attr('data-email');
 
   var yourpw = "";
-  if (api_credentials != null && email == api_credentials[0])
+  if (api_credentials != null && email == api_credentials.username)
     yourpw = "<p class='text-danger'>If you change your own password, you will be logged out of this control panel and will need to log in again.</p>";
 
   show_modal_confirm(
-    "Archive User",
-    $("<p>Set a new password for <b>" + email + "</b>?</p> <p><label for='users_set_password_pw' style='display: block; font-weight: normal'>New Password:</label><input type='password' id='users_set_password_pw'></p><p><small>Passwords must be at least four characters and may not contain spaces.</small>" + yourpw + "</p>"),
+    "Set Password",
+    $("<p>Set a new password for <b>" + email + "</b>?</p> <p><label for='users_set_password_pw' style='display: block; font-weight: normal'>New Password:</label><input type='password' id='users_set_password_pw'></p><p><small>Passwords must be at least eight characters and may not contain spaces.</small>" + yourpw + "</p>"),
     "Set Password",
     function() {
       api(
@@ -195,7 +232,7 @@ function users_remove(elem) {
   var email = $(elem).parents('tr').attr('data-email');
 
   // can't remove yourself
-  if (api_credentials != null && email == api_credentials[0]) {
+  if (api_credentials != null && email == api_credentials.username) {
     show_modal_error("Archive User", "You cannot archive your own account.");
     return;
   }
@@ -227,7 +264,7 @@ function mod_priv(elem, add_remove) {
   var priv = $(elem).parents('td').find('.name').text();
 
   // can't remove your own admin access
-  if (priv == "admin" && add_remove == "remove" && api_credentials != null && email == api_credentials[0]) {
+  if (priv == "admin" && add_remove == "remove" && api_credentials != null && email == api_credentials.username) {
     show_modal_error("Modify Privileges", "You cannot remove the admin privilege from yourself.");
     return;
   }
@@ -249,5 +286,14 @@ function mod_priv(elem, add_remove) {
           show_users();
         });
     });
+}
+
+function generate_random_password() {
+  var pw = "";
+  var charset = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"; // confusable characters skipped
+  for (var i = 0; i < 12; i++)
+    pw += charset.charAt(Math.floor(Math.random() * charset.length));
+  show_modal_error("Random Password", "<p>Here, try this:</p> <p><code style='font-size: 110%'>" + pw + "</code></pr");
+  return false; // cancel click
 }
 </script>

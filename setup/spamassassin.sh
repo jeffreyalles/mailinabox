@@ -16,23 +16,40 @@ source setup/functions.sh # load our functions
 # ----------------------------------------
 
 # Install packages.
-apt_install spampd razor pyzor dovecot-antispam
+# libmail-dkim-perl is needed to make the spamassassin DKIM module work.
+# For more information see Debian Bug #689414:
+# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=689414
+echo "Installing SpamAssassin..."
+apt_install spampd razor pyzor dovecot-antispam libmail-dkim-perl
 
 # Allow spamassassin to download new rules.
 tools/editconf.py /etc/default/spamassassin \
 	CRON=1
 
-# Configure pyzor.
-hide_output pyzor discover
+# Configure pyzor, which is a client to a live database of hashes of
+# spam emails. Set the pyzor configuration directory to something sane.
+# The default is ~/.pyzor. We used to use that, so we'll kill that old
+# directory. Then write the public pyzor server to its servers file.
+# That will prevent an automatic download on first use, and also means
+# we can skip 'pyzor discover', both of which are currently broken by
+# something happening on Sourceforge (#496).
+rm -rf ~/.pyzor
+tools/editconf.py /etc/spamassassin/local.cf -s \
+	pyzor_options="--homedir /etc/spamassassin/pyzor"
+mkdir -p /etc/spamassassin/pyzor
+echo "public.pyzor.org:24441" > /etc/spamassassin/pyzor/servers
+# check with: pyzor --homedir /etc/mail/spamassassin/pyzor ping
 
 # Configure spampd:
 # * Pass messages on to docevot on port 10026. This is actually the default setting but we don't
 #   want to lose track of it. (We've configured Dovecot to listen on this port elsewhere.)
 # * Increase the maximum message size of scanned messages from the default of 64KB to 500KB, which
 #   is Spamassassin (spamc)'s own default. Specified in KBytes.
+# * Disable localmode so Pyzor, DKIM and DNS checks can be used.
 tools/editconf.py /etc/default/spampd \
 	DESTPORT=10026 \
-	ADDOPTS="\"--maxsize=500\""
+	ADDOPTS="\"--maxsize=2000\"" \
+	LOCALONLY=0
 
 # Spamassassin normally wraps spam as an attachment inside a fresh
 # email with a report about the message. This also protects the user
@@ -44,9 +61,61 @@ tools/editconf.py /etc/default/spampd \
 # content or execute scripts, and it is probably confusing to most users.
 #
 # Tell Spamassassin not to modify the original message except for adding
-# the X-Spam-Status mail header and related headers.
+# the X-Spam-Status & X-Spam-Score mail headers and related headers.
 tools/editconf.py /etc/spamassassin/local.cf -s \
-	report_safe=0
+	report_safe=0 \
+	"add_header all Report"=_REPORT_ \
+	"add_header all Score"=_SCORE_
+
+
+# Authentication-Results SPF/Dmarc checks
+# ---------------------------------------
+# OpenDKIM and OpenDMARC are configured to validate and add "Authentication-Results: ..."
+# headers by checking the sender's SPF & DMARC policies. Instead of blocking mail that fails
+# these checks, we can use these headers to evaluate the mail as spam.
+#
+# Our custom rules are added to their own file so that an update to the deb package config
+# does not remove our changes.
+#
+# We need to escape period's in $PRIMARY_HOSTNAME since spamassassin config uses regex.
+
+escapedprimaryhostname="${PRIMARY_HOSTNAME//./\\.}"
+
+cat > /etc/spamassassin/miab_spf_dmarc.cf << EOF
+# Evaluate DMARC Authentication-Results
+header DMARC_PASS Authentication-Results =~ /$escapedprimaryhostname; dmarc=pass/
+describe DMARC_PASS DMARC check passed
+score DMARC_PASS -0.1
+
+header DMARC_NONE Authentication-Results =~ /$escapedprimaryhostname; dmarc=none/
+describe DMARC_NONE DMARC record not found
+score DMARC_NONE 0.1
+
+header DMARC_FAIL_NONE Authentication-Results =~ /$escapedprimaryhostname; dmarc=fail \(p=none/
+describe DMARC_FAIL_NONE DMARC check failed (p=none)
+score DMARC_FAIL_NONE 2.0
+
+header DMARC_FAIL_QUARANTINE Authentication-Results =~ /$escapedprimaryhostname; dmarc=fail \(p=quarantine/
+describe DMARC_FAIL_QUARANTINE DMARC check failed (p=quarantine)
+score DMARC_FAIL_QUARANTINE 5.0
+
+header DMARC_FAIL_REJECT Authentication-Results =~ /$escapedprimaryhostname; dmarc=fail \(p=reject/
+describe DMARC_FAIL_REJECT DMARC check failed (p=reject)
+score DMARC_FAIL_REJECT 10.0
+
+# Evaluate SPF Authentication-Results
+header SPF_PASS Authentication-Results =~ /$escapedprimaryhostname; spf=pass/
+describe SPF_PASS SPF check passed
+score SPF_PASS -0.1
+
+header SPF_NONE Authentication-Results =~ /$escapedprimaryhostname; spf=none/
+describe SPF_NONE SPF record not found
+score SPF_NONE 2.0
+
+header SPF_FAIL Authentication-Results =~ /$escapedprimaryhostname; spf=fail/
+describe SPF_FAIL SPF check failed
+score SPF_FAIL 5.0
+EOF
 
 # Bayesean learning
 # -----------------
@@ -61,9 +130,13 @@ tools/editconf.py /etc/spamassassin/local.cf -s \
 # * Writable by the debian-spamd user, which runs /etc/cron.daily/spamassassin.
 #
 # We'll have these files owned by spampd and grant access to the other two processes.
+#
+# Spamassassin will change the access rights back to the defaults, so we must also configure
+# the filemode in the config file.
 
 tools/editconf.py /etc/spamassassin/local.cf -s \
-	bayes_path=$STORAGE_ROOT/mail/spamassassin/bayes
+	bayes_path=$STORAGE_ROOT/mail/spamassassin/bayes \
+	bayes_file_mode=0666
 
 mkdir -p $STORAGE_ROOT/mail/spamassassin
 chown -R spampd:spampd $STORAGE_ROOT/mail/spamassassin
@@ -82,6 +155,7 @@ cat > /etc/dovecot/conf.d/99-local-spampd.conf << EOF;
 plugin {
     antispam_backend = pipe
     antispam_spam_pattern_ignorecase = SPAM
+    antispam_trash_pattern_ignorecase = trash;Deleted *
     antispam_allow_append_to_spam = yes
     antispam_pipe_program_spam_args = /usr/local/bin/sa-learn-pipe.sh;--spam
     antispam_pipe_program_notspam_args = /usr/local/bin/sa-learn-pipe.sh;--ham
